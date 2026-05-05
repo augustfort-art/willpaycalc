@@ -42,7 +42,6 @@
   .legend { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0; font-size: 11px; }
   .legend-item { display: flex; align-items: center; gap: 4px; padding: 2px 8px; background: #1a2029; border-radius: 6px; }
   .legend-dot { width: 8px; height: 8px; border-radius: 50%; }
-  .pool-count-info { color: #8a929c; font-size: 12px; margin: 4px 0; }
 </style>
 </head>
 <body>
@@ -72,18 +71,13 @@
 </div>
 
 <script>
-// Pool colors — each pool gets a distinct accent
 const POOL_COLORS = ['#4a90e2', '#b97aff', '#5cb85c', '#f0ad4e', '#e85d75'];
 const DEFAULT_LABELS = ['Pick-6', 'Pick-5', 'Pick-4', 'Pick-3', 'Double'];
 
-// State: array of { id, label, color, horses, inputText }
 let pools = [];
 let nextId = 1;
 
-function init() {
-  // Start with one empty pool
-  addPool();
-}
+function init() { addPool(); }
 
 function addPool() {
   if (pools.length >= 5) return;
@@ -101,7 +95,6 @@ function addPool() {
 
 function removePool(id) {
   pools = pools.filter(p => p.id !== id);
-  // Clear output if pools change after a calculation
   document.getElementById('output').innerHTML = '';
   renderPools();
 }
@@ -109,7 +102,7 @@ function removePool(id) {
 function renderPools() {
   const container = document.getElementById('pools-container');
   container.innerHTML = '';
-  pools.forEach((p, idx) => {
+  pools.forEach((p) => {
     const block = document.createElement('div');
     block.className = 'pool-block';
     block.style.borderLeftColor = p.color;
@@ -124,13 +117,7 @@ function renderPools() {
     container.appendChild(block);
     if (p.horses.length > 0) renderReview(p);
   });
-  
-  // Update add-pool button visibility
-  const addBtn = document.getElementById('addBtn');
-  addBtn.style.display = pools.length >= 5 ? 'none' : '';
-  if (pools.length >= 5) {
-    // nothing; button hidden
-  }
+  document.getElementById('addBtn').style.display = pools.length >= 5 ? 'none' : '';
 }
 
 function updateLabel(id, val) {
@@ -164,10 +151,10 @@ function parseWillPays(text) {
     if (/^\$[\d.]+\s*(Pick|Double|PICK)/i.test(line)) return true;
     if (/^X$/i.test(line)) return true;
     if (/^[+]?\$$/.test(line)) return true;
+    if (/^[<>]+$/.test(line)) return true;
+    if (/^[\u3008\u3009\u2039\u203A\u00AB\u00BB\u3001\u3002]+$/.test(line)) return true;
     if (/^\d+\s*\/\s*\d/.test(line)) return true;
-    // Leg strings can start with comma-separated numbers: "7,11,12 / 1,2 / 2,4 WITH"
     if (/^[\d,]+\s*\/\s*[\d,]/.test(line)) return true;
-    // Or any line containing slash-separated number groups followed by WITH
     if (/[\d,]+\s*\/\s*[\d,]+.*WITH/i.test(line)) return true;
     return false;
   };
@@ -187,10 +174,9 @@ function parseWillPays(text) {
     if (/[a-zA-Z]/.test(line)) { tokens.push({ type: 'name', value: line }); continue; }
   }
   const horses = [];
-  const namePositions = [];
-  for (let i = 0; i < tokens.length; i++) if (tokens[i].type === 'name') namePositions.push(i);
-  for (let idx = 0; idx < namePositions.length; idx++) {
-    const nameIdx = namePositions[idx];
+  for (let i = 0; i < tokens.length; i++) {
+    if (tokens[i].type !== 'name') continue;
+    const nameIdx = i;
     let pgmNum = null, scratched = false;
     for (let j = nameIdx - 1; j >= Math.max(0, nameIdx - 3); j--) {
       const t = tokens[j];
@@ -198,36 +184,22 @@ function parseWillPays(text) {
       if (t.type === 'pgm' && pgmNum === null) pgmNum = t.value;
       if (t.type === 'scr') scratched = true;
     }
-    for (let j = nameIdx + 1; j <= Math.min(tokens.length - 1, nameIdx + 2); j++) {
+    let willPay = null;
+    for (let j = nameIdx + 1; j < tokens.length; j++) {
       const t = tokens[j];
-      if (t.type === 'name' || t.type === 'pgm' || t.type === 'amount' || t.type === 'dash') break;
-      if (t.type === 'scr') scratched = true;
+      if (t.type === 'name') break;
+      if (t.type === 'pgm') break;
+      if (t.type === 'scr') { scratched = true; continue; }
+      if (t.type === 'amount') { willPay = t.value; break; }
+      if (t.type === 'dash') { scratched = true; break; }
     }
-    horses.push({ num: pgmNum, name: tokens[nameIdx].value, scratched, willPay: null });
+    if (willPay === null) scratched = true;
+    horses.push({ num: pgmNum, name: tokens[nameIdx].value, scratched, willPay });
   }
   let lastKnown = 0;
   for (let i = 0; i < horses.length; i++) {
     if (horses[i].num !== null) lastKnown = horses[i].num;
     else { horses[i].num = lastKnown + 1; lastKnown = horses[i].num; }
-  }
-  const amountTokens = tokens.filter(t => t.type === 'amount' || t.type === 'dash');
-  let amtIdx = 0;
-  for (const h of horses) {
-    const nextAmt = amountTokens[amtIdx];
-    if (!nextAmt) {
-      // No more amounts — assume scratched (common when OCR truncates the last row)
-      h.scratched = true;
-      h.willPay = null;
-      continue;
-    }
-    if (h.scratched) {
-      if (nextAmt.type === 'dash') amtIdx++;
-    } else {
-      if (nextAmt.type === 'amount') { h.willPay = nextAmt.value; amtIdx++; }
-      else if (nextAmt.type === 'dash') {
-        h.scratched = true; h.willPay = null; amtIdx++;
-      }
-    }
   }
   return { horses, betType, liveLegs };
 }
@@ -307,7 +279,6 @@ function calculate() {
   const activePools = pools.filter(p => p.horses.length > 0);
   if (activePools.length === 0) { alert('Parse at least one pool first.'); return; }
   for (const p of activePools) calcFair(p.horses);
-  
   const out = document.getElementById('output');
   let html = '<div class="step-label">Fair Odds</div>';
   if (activePools.length === 1) html += renderSingle(activePools[0]);
@@ -344,21 +315,16 @@ function renderSingle(pool) {
 }
 
 function renderComparison(activePools) {
-  // Build unified set of horse numbers across all pools
   const numSet = new Set();
   for (const p of activePools) p.horses.forEach(h => numSet.add(h.num));
   const nums = [...numSet].sort((a,b)=>a-b);
-  
   const getH = (pool, n) => pool.horses.find(h => h.num === n);
-  
-  // For each horse, gather info across pools
   const rows = nums.map(n => {
     const cells = activePools.map(p => {
       const h = getH(p, n);
       const scr = !h || h.scratched || h.willPay === null;
       return { pool: p, h, scr };
     });
-    // Best name from any pool
     let name = `#${n}`;
     for (const c of cells) { if (c.h && c.h.name) { name = c.h.name; break; } }
     const allScr = cells.every(c => c.scr);
@@ -366,8 +332,6 @@ function renderComparison(activePools) {
     const bestProb = liveProbs.length ? Math.max(...liveProbs) : 0;
     const minProb = liveProbs.length ? Math.min(...liveProbs) : 0;
     const spread = liveProbs.length >= 2 ? (bestProb - minProb) : 0;
-    
-    // Find which pool has highest and lowest probability
     let topPool = null, botPool = null;
     if (liveProbs.length >= 2) {
       let topVal = -1, botVal = 2;
@@ -379,20 +343,16 @@ function renderComparison(activePools) {
     }
     return { num: n, name, cells, allScr, bestProb, spread, topPool, botPool };
   });
-  
   rows.sort((a,b) => {
     if (a.allScr && !b.allScr) return 1;
     if (!a.allScr && b.allScr) return -1;
     return b.bestProb - a.bestProb;
   });
-  
-  // Legend
   let html = '<div class="legend">';
   for (const p of activePools) {
     html += `<div class="legend-item"><span class="legend-dot" style="background:${p.color}"></span>${escapeHtml(p.label)}</div>`;
   }
   html += '</div>';
-  
   html += '<div class="results-wrap"><table class="results"><thead><tr>';
   html += `<th>#</th><th>Horse</th>`;
   for (const p of activePools) {
@@ -400,7 +360,6 @@ function renderComparison(activePools) {
   }
   if (activePools.length >= 2) html += `<th class="num">Spread</th>`;
   html += '</tr></thead><tbody>';
-  
   for (const r of rows) {
     html += `<tr class="${r.allScr ? 'scr' : ''}">`;
     html += `<td class="pgm">${r.num}</td><td class="name">${escapeHtml(r.name)}</td>`;
@@ -426,7 +385,6 @@ function renderComparison(activePools) {
     html += '</tr>';
   }
   html += '</tbody></table></div>';
-  
   html += '<div class="footer-note" style="margin-top:8px"><strong>▲</strong> = pool most bullish on horse, <strong>▼</strong> = least bullish (only shown when spread ≥ 3%).<br><strong>Spread</strong> = gap between highest and lowest implied probability across pools. Bigger spreads = more disagreement = more interesting.</div>';
   return html;
 }
