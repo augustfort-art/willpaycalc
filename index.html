@@ -362,16 +362,10 @@ function formatOdds(x) {
 }
 
 function renderSingle(pool) {
-  const sorted = [...pool.horses].sort((a, b) => {
-    if (a.scratched && !b.scratched) return 1;
-    if (!a.scratched && b.scratched) return -1;
-    if (a.fairOdds === null) return 1;
-    if (b.fairOdds === null) return -1;
-    return a.fairOdds - b.fairOdds;
-  });
+  const sorted = [...pool.horses].sort((a, b) => (a.num || 0) - (b.num || 0));
   const edgeMult = 1 + edgeThreshold;
   let html = '<div class="results-wrap"><table class="results"><thead><tr>';
-  html += `<th>#</th><th>Horse</th><th class="num">Will-Pay</th><th class="num">%</th><th class="num">Fair</th><th class="num">Bet if ≥</th>`;
+  html += `<th>#</th><th>Horse</th><th class="num">Bet if ≥</th><th class="num">Will-Pay</th><th class="num">%</th><th class="num">Fair</th>`;
   html += '</tr></thead><tbody>';
   for (const h of sorted) {
     html += `<tr class="${h.scratched ? 'scr' : ''}">`;
@@ -379,11 +373,11 @@ function renderSingle(pool) {
     if (h.scratched || h.willPay === null) {
       html += `<td class="num">—</td><td class="num">—</td><td class="num">—</td><td class="num">—</td>`;
     } else {
+      const tgt = targetOdds(h.impliedProb, edgeMult);
+      html += `<td class="num"><span class="target" style="color:#5cb85c;font-weight:600">${formatOdds(tgt)}</span></td>`;
       html += `<td class="num">$${h.willPay.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</td>`;
       html += `<td class="num">${(h.impliedProb*100).toFixed(1)}%</td>`;
       html += `<td class="num" style="color:${pool.color};font-weight:600">${formatOdds(h.fairOdds)}</td>`;
-      const tgt = targetOdds(h.impliedProb, edgeMult);
-      html += `<td class="num"><span class="target">${formatOdds(tgt)}</span></td>`;
     }
     html += '</tr>';
   }
@@ -454,11 +448,7 @@ function renderComparison(activePools) {
     }
     return { num: n, name, cells, allScr, bestProb, spread, topPool, botPool, betIf };
   });
-  rows.sort((a,b) => {
-    if (a.allScr && !b.allScr) return 1;
-    if (!a.allScr && b.allScr) return -1;
-    return b.bestProb - a.bestProb;
-  });
+  rows.sort((a,b) => (a.num || 0) - (b.num || 0));
   let html = '<div class="legend">';
   for (const p of activePools) {
     const depthMark = (p === sharpest && activePools.length >= 2) ? ' ★' : '';
@@ -466,16 +456,25 @@ function renderComparison(activePools) {
   }
   html += '</div>';
   html += '<div class="results-wrap"><table class="results"><thead><tr>';
-  html += `<th>#</th><th>Horse</th>`;
+  html += `<th>#</th><th>Horse</th><th class="num">Bet if ≥</th>`;
   for (const p of activePools) {
     html += `<th class="num" style="color:${p.color}">${escapeHtml(p.label)}</th>`;
   }
   if (activePools.length >= 2) html += `<th class="num">Spread</th>`;
-  html += `<th class="num">Bet if ≥</th>`;
   html += '</tr></thead><tbody>';
   for (const r of rows) {
     html += `<tr class="${r.allScr ? 'scr' : ''}">`;
     html += `<td class="pgm">${r.num}</td><td class="name">${escapeHtml(r.name)}</td>`;
+    if (!r.betIf) {
+      html += `<td class="num">—</td>`;
+    } else if (r.betIf.type === 'single') {
+      html += `<td class="num"><div class="bet-cell"><span class="target" style="color:${r.betIf.color}">${formatOdds(r.betIf.odds)}</span></div></td>`;
+    } else {
+      html += `<td class="num"><div class="bet-cell">`;
+      html += `<div><span class="label">sharp</span> <span class="target" style="color:${r.betIf.sharpColor}">${formatOdds(r.betIf.sharpOdds)}</span></div>`;
+      html += `<div><span class="label">retail</span> <span class="target" style="color:${r.betIf.retailColor}">${formatOdds(r.betIf.retailOdds)}</span></div>`;
+      html += `</div></td>`;
+    }
     for (const c of r.cells) {
       if (c.scr) {
         html += `<td class="num">—</td>`;
@@ -494,16 +493,6 @@ function renderComparison(activePools) {
       } else {
         html += `<td class="num">—</td>`;
       }
-    }
-    if (!r.betIf) {
-      html += `<td class="num">—</td>`;
-    } else if (r.betIf.type === 'single') {
-      html += `<td class="num"><div class="bet-cell"><span class="target" style="color:${r.betIf.color}">${formatOdds(r.betIf.odds)}</span></div></td>`;
-    } else {
-      html += `<td class="num"><div class="bet-cell">`;
-      html += `<div><span class="label">sharp</span> <span class="target" style="color:${r.betIf.sharpColor}">${formatOdds(r.betIf.sharpOdds)}</span></div>`;
-      html += `<div><span class="label">retail</span> <span class="target" style="color:${r.betIf.retailColor}">${formatOdds(r.betIf.retailOdds)}</span></div>`;
-      html += `</div></td>`;
     }
     html += '</tr>';
   }
