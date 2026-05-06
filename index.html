@@ -51,6 +51,13 @@
   .bet-cell { font-size: 11px; line-height: 1.3; }
   .bet-cell .target { font-weight: 600; color: #5cb85c; }
   .bet-cell .label { font-size: 9px; color: #8a929c; text-transform: uppercase; letter-spacing: 0.3px; }
+  .live-input { width: 64px; padding: 6px 4px; font-size: 12px; text-align: right; font-variant-numeric: tabular-nums; background: #0f1419; border: 1px solid #2a3340; border-radius: 6px; color: #e8eaed; }
+  .live-input:focus { border-color: #4a90e2; outline: none; }
+  .verdict { display: inline-block; padding: 3px 8px; border-radius: 6px; font-weight: 700; font-size: 11px; text-transform: uppercase; letter-spacing: 0.3px; }
+  .verdict.bet { background: #1a3a1a; color: #5cb85c; border: 1px solid #2a5a2a; }
+  .verdict.close { background: #3a3a1a; color: #ffb84a; border: 1px solid #5a5a2a; }
+  .verdict.pass { background: #2a1a1a; color: #e85d75; border: 1px solid #4a2a2a; }
+  .edge-pct { font-size: 10px; color: #8a929c; margin-top: 1px; font-variant-numeric: tabular-nums; }
 </style>
 </head>
 <body>
@@ -90,6 +97,9 @@ let nextId = 1;
 
 let edgeThreshold = 0.20;
 let anchorMode = 'sharpest';
+
+// Live odds keyed by horse program number — survives recalculation
+let liveOdds = {};
 
 function init() { addPool(); }
 
@@ -314,6 +324,41 @@ function getShallowestPool(activePools) {
   return shallow;
 }
 
+// Parse user-typed odds. Accepts: "5", "5-1", "5/1", "5.5", "9/2", "1.5"
+function parseLiveOdds(s) {
+  if (!s || typeof s !== 'string') return null;
+  const cleaned = s.trim();
+  if (!cleaned) return null;
+  // Handle "X/Y" or "X-Y" fractional like "9/2" or "5-1"
+  const fracMatch = cleaned.match(/^(\d+(?:\.\d+)?)\s*[\/\-]\s*(\d+(?:\.\d+)?)$/);
+  if (fracMatch) {
+    const num = parseFloat(fracMatch[1]);
+    const den = parseFloat(fracMatch[2]);
+    if (den > 0) return num / den;
+  }
+  // Plain number = X-1
+  const v = parseFloat(cleaned);
+  if (!isNaN(v) && v >= 0) return v;
+  return null;
+}
+
+// Compute edge: given fair probability p and live odds (decimal X-1), edge = p * (odds + 1) - 1
+function computeEdge(fairProb, liveOddsX1) {
+  if (!fairProb || fairProb <= 0 || liveOddsX1 === null || liveOddsX1 < 0) return null;
+  return fairProb * (liveOddsX1 + 1) - 1;
+}
+
+function setLiveOdds(num, value) {
+  const parsed = parseLiveOdds(value);
+  if (parsed === null) {
+    delete liveOdds[num];
+  } else {
+    liveOdds[num] = parsed;
+  }
+  // Re-render only the affected row's verdict cell — simpler to re-render whole table
+  calculate();
+}
+
 function calculate() {
   const activePools = pools.filter(p => p.horses.length > 0);
   if (activePools.length === 0) { alert('Parse at least one pool first.'); return; }
@@ -324,7 +369,16 @@ function calculate() {
   if (activePools.length === 1) html += renderSingle(activePools[0]);
   else html += renderComparison(activePools);
   out.innerHTML = html;
-  out.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  // Don't scroll on every recalc — only on first render
+}
+
+let firstRender = true;
+function calculateAndScroll() {
+  calculate();
+  if (firstRender) {
+    document.getElementById('output').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    firstRender = false;
+  }
 }
 
 function renderControls(activePools) {
@@ -361,20 +415,51 @@ function formatOdds(x) {
   return Math.round(x) + '-1';
 }
 
+// Returns { verdict, edge } where verdict is 'bet' | 'close' | 'pass' | null
+function getVerdict(fairProb, num) {
+  const live = liveOdds[num];
+  if (live === undefined || live === null) return null;
+  const edge = computeEdge(fairProb, live);
+  if (edge === null) return null;
+  let v;
+  if (edge >= edgeThreshold) v = 'bet';
+  else if (edge >= edgeThreshold * 0.5) v = 'close';
+  else v = 'pass';
+  return { verdict: v, edge };
+}
+
+function renderVerdictCell(num, fairProb) {
+  const live = liveOdds[num];
+  const liveStr = (live !== undefined && live !== null) ? (live < 10 ? live.toFixed(1) : Math.round(live).toString()) : '';
+  let html = `<td><input class="live-input" type="text" inputmode="decimal" placeholder="—" value="${liveStr}" onchange="setLiveOdds(${num}, this.value)" onclick="this.select()" /></td>`;
+  if (live === undefined || live === null || !fairProb) {
+    html += `<td class="num">—</td>`;
+    return html;
+  }
+  const v = getVerdict(fairProb, num);
+  if (!v) { html += `<td class="num">—</td>`; return html; }
+  const edgePct = (v.edge * 100);
+  const edgeStr = (edgePct >= 0 ? '+' : '') + edgePct.toFixed(1) + '%';
+  let label = v.verdict === 'bet' ? 'BET' : (v.verdict === 'close' ? 'CLOSE' : 'PASS');
+  html += `<td><div class="verdict ${v.verdict}">${label}</div><div class="edge-pct">${edgeStr}</div></td>`;
+  return html;
+}
+
 function renderSingle(pool) {
   const sorted = [...pool.horses].sort((a, b) => (a.num || 0) - (b.num || 0));
   const edgeMult = 1 + edgeThreshold;
   let html = '<div class="results-wrap"><table class="results"><thead><tr>';
-  html += `<th>#</th><th>Horse</th><th class="num">Bet if ≥</th><th class="num">Will-Pay</th><th class="num">%</th><th class="num">Fair</th>`;
+  html += `<th>#</th><th>Horse</th><th class="num">Bet if ≥</th><th>Live</th><th>Value</th><th class="num">Will-Pay</th><th class="num">%</th><th class="num">Fair</th>`;
   html += '</tr></thead><tbody>';
   for (const h of sorted) {
     html += `<tr class="${h.scratched ? 'scr' : ''}">`;
     html += `<td class="pgm" style="color:${pool.color}">${h.num}</td><td class="name">${escapeHtml(h.name)}</td>`;
     if (h.scratched || h.willPay === null) {
-      html += `<td class="num">—</td><td class="num">—</td><td class="num">—</td><td class="num">—</td>`;
+      html += `<td class="num">—</td><td>—</td><td>—</td><td class="num">—</td><td class="num">—</td><td class="num">—</td>`;
     } else {
       const tgt = targetOdds(h.impliedProb, edgeMult);
       html += `<td class="num"><span class="target" style="color:#5cb85c;font-weight:600">${formatOdds(tgt)}</span></td>`;
+      html += renderVerdictCell(h.num, h.impliedProb);
       html += `<td class="num">$${h.willPay.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</td>`;
       html += `<td class="num">${(h.impliedProb*100).toFixed(1)}%</td>`;
       html += `<td class="num" style="color:${pool.color};font-weight:600">${formatOdds(h.fairOdds)}</td>`;
@@ -382,7 +467,7 @@ function renderSingle(pool) {
     html += '</tr>';
   }
   html += '</tbody></table></div>';
-  html += `<div class="footer-note" style="margin-top:8px"><strong>Bet if ≥</strong> = minimum win-pool odds needed for +${(edgeThreshold*100).toFixed(0)}% edge vs. fair odds.</div>`;
+  html += `<div class="footer-note" style="margin-top:8px"><strong>Live</strong>: enter current win odds (e.g., "5", "5-1", "9/2"). <strong>Value</strong>: BET = ≥+${(edgeThreshold*100).toFixed(0)}% edge, CLOSE = halfway there, PASS = below.</div>`;
   return html;
 }
 
@@ -420,6 +505,7 @@ function renderComparison(activePools) {
       }
     }
     let betIf = null;
+    let anchorProb = null; // probability used for value verdict
     if (liveCells.length > 0) {
       const sharpCell = liveCells.find(c => c.pool.id === sharpest.id);
       const shallowCell = liveCells.find(c => c.pool.id === shallowest.id);
@@ -427,11 +513,15 @@ function renderComparison(activePools) {
 
       if (anchorMode === 'sharpest') {
         const p = sharpCell ? sharpCell.h.impliedProb : avgProb;
+        anchorProb = p;
         betIf = { type: 'single', odds: targetOdds(p, edgeMult), color: sharpCell ? sharpCell.pool.color : '#5cb85c' };
       } else if (anchorMode === 'consensus') {
+        anchorProb = avgProb;
         betIf = { type: 'single', odds: targetOdds(avgProb, edgeMult), color: '#5cb85c' };
       } else if (anchorMode === 'dual') {
         if (spread >= 0.03 && sharpCell && shallowCell && sharpest.id !== shallowest.id) {
+          // Use sharp anchor for the verdict — sharpest is most reliable
+          anchorProb = sharpCell.h.impliedProb;
           betIf = {
             type: 'dual',
             sharpOdds: targetOdds(sharpCell.h.impliedProb, edgeMult),
@@ -442,11 +532,12 @@ function renderComparison(activePools) {
             retailLabel: shallowest.label
           };
         } else {
+          anchorProb = avgProb;
           betIf = { type: 'single', odds: targetOdds(avgProb, edgeMult), color: '#5cb85c' };
         }
       }
     }
-    return { num: n, name, cells, allScr, bestProb, spread, topPool, botPool, betIf };
+    return { num: n, name, cells, allScr, bestProb, spread, topPool, botPool, betIf, anchorProb };
   });
   rows.sort((a,b) => (a.num || 0) - (b.num || 0));
   let html = '<div class="legend">';
@@ -456,7 +547,7 @@ function renderComparison(activePools) {
   }
   html += '</div>';
   html += '<div class="results-wrap"><table class="results"><thead><tr>';
-  html += `<th>#</th><th>Horse</th><th class="num">Bet if ≥</th>`;
+  html += `<th>#</th><th>Horse</th><th class="num">Bet if ≥</th><th>Live</th><th>Value</th>`;
   for (const p of activePools) {
     html += `<th class="num" style="color:${p.color}">${escapeHtml(p.label)}</th>`;
   }
@@ -474,6 +565,12 @@ function renderComparison(activePools) {
       html += `<div><span class="label">sharp</span> <span class="target" style="color:${r.betIf.sharpColor}">${formatOdds(r.betIf.sharpOdds)}</span></div>`;
       html += `<div><span class="label">retail</span> <span class="target" style="color:${r.betIf.retailColor}">${formatOdds(r.betIf.retailOdds)}</span></div>`;
       html += `</div></td>`;
+    }
+    // Live + Value cells
+    if (r.allScr || !r.anchorProb) {
+      html += `<td>—</td><td>—</td>`;
+    } else {
+      html += renderVerdictCell(r.num, r.anchorProb);
     }
     for (const c of r.cells) {
       if (c.scr) {
@@ -497,14 +594,14 @@ function renderComparison(activePools) {
     html += '</tr>';
   }
   html += '</tbody></table></div>';
-  let footer = '<div class="footer-note" style="margin-top:8px"><strong>▲</strong> = pool most bullish on horse, <strong>▼</strong> = least bullish (spread ≥ 3%).<br>';
-  footer += '<strong>Spread</strong> = gap between highest and lowest implied probability across pools.<br>';
+  let footer = '<div class="footer-note" style="margin-top:8px"><strong>Live</strong>: type current win odds (e.g., "5", "5-1", "9/2"). <strong>Value</strong>: BET = ≥+' + (edgeThreshold*100).toFixed(0) + '% edge, CLOSE = halfway, PASS = below. Verdict uses sharp anchor when pools disagree.<br>';
+  footer += '<strong>▲</strong> = pool most bullish, <strong>▼</strong> = least (spread ≥ 3%). <strong>Spread</strong> = gap between highest and lowest implied probability.<br>';
   if (anchorMode === 'sharpest') {
-    footer += `<strong>Bet if ≥</strong> = min win odds for +${(edgeThreshold*100).toFixed(0)}% edge, anchored on sharpest pool (★ ${escapeHtml(sharpest.label)}).`;
+    footer += `<strong>Bet if ≥</strong> anchored on sharpest pool (★ ${escapeHtml(sharpest.label)}).`;
   } else if (anchorMode === 'consensus') {
-    footer += `<strong>Bet if ≥</strong> = min win odds for +${(edgeThreshold*100).toFixed(0)}% edge, anchored on average across pools.`;
+    footer += `<strong>Bet if ≥</strong> anchored on average across pools.`;
   } else {
-    footer += `<strong>Bet if ≥</strong> = min win odds for +${(edgeThreshold*100).toFixed(0)}% edge. When pools disagree (spread ≥ 3%), shows both <strong>sharp</strong> (${escapeHtml(sharpest.label)}) and <strong>retail</strong> (${escapeHtml(shallowest.label)}) anchors.`;
+    footer += `<strong>Bet if ≥</strong> shows sharp (${escapeHtml(sharpest.label)}) and retail (${escapeHtml(shallowest.label)}) when pools disagree.`;
   }
   footer += '</div>';
   html += footer;
@@ -514,6 +611,7 @@ function renderComparison(activePools) {
 function clearAll() {
   pools = [];
   nextId = 1;
+  liveOdds = {};
   document.getElementById('output').innerHTML = '';
   addPool();
 }
