@@ -182,9 +182,20 @@ function reorderColumnOCR(lines) {
   const afterAmountCount = after.filter(l => /^\$[\d,]+\.\d{2}$/.test(l)).length;
   const afterNonAmountCount = after.filter(l => /[a-zA-Z]/.test(l) && !/^\$/.test(l)).length;
   if (beforeHasAmounts || afterAmountCount < 2 || afterNonAmountCount > afterAmountCount) return lines;
+
+  const isHeaderJunk = (line) => {
+    if (/^\$[\d.]+\s*(Pick|Double|PICK)/i.test(line)) return true;
+    if (/^[\d,]+\s*\/\s*[\d,]+/.test(line)) return true;
+    if (/WITH$/i.test(line)) return true;
+    if (/^PAYS$/i.test(line)) return true;
+    if (/^(POOLS|PROBABLES|WILL PAYS|RACE\s*\d)$/i.test(line)) return true;
+    return false;
+  };
+
   const pairs = [];
   let curPgm = null;
   for (const line of before) {
+    if (isHeaderJunk(line)) continue;
     if (/^\d{1,2}$/.test(line) && parseInt(line) >= 1 && parseInt(line) <= 20) {
       curPgm = line;
     } else if (/[a-zA-Z]/.test(line) && curPgm !== null) {
