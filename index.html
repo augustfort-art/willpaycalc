@@ -51,8 +51,28 @@
   .bet-cell { font-size: 11px; line-height: 1.3; }
   .bet-cell .target { font-weight: 600; color: #5cb85c; }
   .bet-cell .label { font-size: 9px; color: #8a929c; text-transform: uppercase; letter-spacing: 0.3px; }
-  .live-input { width: 80px; min-width: 80px; height: 44px; padding: 8px 12px; font-size: 16px; line-height: 1; text-align: center; font-variant-numeric: tabular-nums; background: #0f1419; border: 2px solid #4a90e2; border-radius: 8px; color: #ffffff !important; -webkit-text-fill-color: #ffffff; -webkit-appearance: none; appearance: none; }
-  .live-input:focus { border-color: #5cb85c; outline: none; color: #ffffff !important; -webkit-text-fill-color: #ffffff; }
+  .live-input {
+    width: 80px !important;
+    min-width: 80px !important;
+    height: 44px !important;
+    padding: 8px 10px !important;
+    font-size: 16px !important;
+    line-height: 1 !important;
+    text-align: center !important;
+    font-variant-numeric: tabular-nums;
+    background: #ffffff !important;
+    border: 2px solid #4a90e2 !important;
+    border-radius: 8px !important;
+    color: #000000 !important;
+    -webkit-text-fill-color: #000000 !important;
+    -webkit-appearance: none !important;
+    appearance: none !important;
+    caret-color: #000000 !important;
+  }
+  .live-input:focus {
+    border-color: #5cb85c !important;
+    outline: none !important;
+  }
   .verdict { display: inline-block; padding: 3px 8px; border-radius: 6px; font-weight: 700; font-size: 11px; text-transform: uppercase; letter-spacing: 0.3px; }
   .verdict.bet { background: #1a3a1a; color: #5cb85c; border: 1px solid #2a5a2a; }
   .verdict.close { background: #3a3a1a; color: #ffb84a; border: 1px solid #5a5a2a; }
@@ -153,8 +173,40 @@ function updateInputText(id, val) {
   if (p) p.inputText = val;
 }
 
+function reorderColumnOCR(lines) {
+  const amountIdx = lines.findIndex(l => /^\$[\d,]+\.\d{2}$/.test(l));
+  if (amountIdx === -1) return lines;
+  const before = lines.slice(0, amountIdx);
+  const after = lines.slice(amountIdx);
+  const beforeHasAmounts = before.some(l => /^\$[\d,]+\.\d{2}$/.test(l));
+  const afterAmountCount = after.filter(l => /^\$[\d,]+\.\d{2}$/.test(l)).length;
+  const afterNonAmountCount = after.filter(l => /[a-zA-Z]/.test(l) && !/^\$/.test(l)).length;
+  if (beforeHasAmounts || afterAmountCount < 2 || afterNonAmountCount > afterAmountCount) return lines;
+  const pairs = [];
+  let curPgm = null;
+  for (const line of before) {
+    if (/^\d{1,2}$/.test(line) && parseInt(line) >= 1 && parseInt(line) <= 20) {
+      curPgm = line;
+    } else if (/[a-zA-Z]/.test(line) && curPgm !== null) {
+      pairs.push({ pgm: curPgm, name: line });
+      curPgm = null;
+    } else if (/[a-zA-Z]/.test(line)) {
+      pairs.push({ pgm: null, name: line });
+    }
+  }
+  const amounts = after.filter(l => /^\$[\d,]+\.\d{2}$/.test(l) || /^[—\-]+$/.test(l));
+  const result = [];
+  for (let i = 0; i < pairs.length; i++) {
+    if (pairs[i].pgm) result.push(pairs[i].pgm);
+    result.push(pairs[i].name);
+    if (i < amounts.length) result.push(amounts[i]);
+  }
+  return result;
+}
+
 function parseWillPays(text) {
-  const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+  let lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+  lines = reorderColumnOCR(lines);
   let betType = '', liveLegs = '';
   for (const line of lines) {
     if (/\$[\d.]+\s*(Pick-?\d|PICK\s*(SIX|FIVE|FOUR|THREE|TWO)|Double|Daily Double)/i.test(line)) betType = line;
