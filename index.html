@@ -52,8 +52,8 @@
   .bet-cell .target { font-weight: 600; color: #5cb85c; }
   .bet-cell .label { font-size: 9px; color: #8a929c; text-transform: uppercase; letter-spacing: 0.3px; }
   .live-input {
-    width: 80px !important;
-    min-width: 80px !important;
+    width: 90px !important;
+    min-width: 90px !important;
     height: 44px !important;
     padding: 8px 10px !important;
     font-size: 16px !important;
@@ -181,7 +181,8 @@ function reorderColumnOCR(lines) {
   const beforeHasAmounts = before.some(l => /^\$[\d,]+\.\d{2}$/.test(l));
   const afterAmountCount = after.filter(l => /^\$[\d,]+\.\d{2}$/.test(l)).length;
   const afterNonAmountCount = after.filter(l => /[a-zA-Z]/.test(l) && !/^\$/.test(l)).length;
-  if (beforeHasAmounts || afterAmountCount < 2 || afterNonAmountCount > afterAmountCount) return lines;
+  const afterHasPgm = after.some(l => /^\d{1,2}$/.test(l) && parseInt(l) >= 1 && parseInt(l) <= 20);
+  if (beforeHasAmounts || afterAmountCount < 2 || afterNonAmountCount > afterAmountCount || afterHasPgm) return lines;
 
   const isHeaderJunk = (line) => {
     if (/^\$[\d.]+\s*(Pick|Double|PICK)/i.test(line)) return true;
